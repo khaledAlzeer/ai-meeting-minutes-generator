@@ -12,7 +12,9 @@ license: mit
 
 # 🗒️ AI Meeting Minutes Generator
 
-Transcribe meeting audio or video with **OpenAI Whisper** and turn it into structured, professional meeting minutes with **Meta Llama 3.2 3B Instruct** — running entirely on open-source models, locally or on Hugging Face Spaces.
+Transcribe meeting audio or video with **OpenAI Whisper** and turn it into structured, professional meeting minutes with **Meta Llama 3.2 3B Instruct**.
+
+The project can run locally on a CUDA-enabled machine or as a cloud-hosted Gradio application on **Modal** using a GPU-backed runtime.
 
 > Upload a recording or video, use your microphone, and get back a polished Markdown meeting-minutes document with a summary, discussion points, decisions, key takeaways, action items with owners, and next steps — ready to copy, share, or download.
 
@@ -33,12 +35,18 @@ Transcribe meeting audio or video with **OpenAI Whisper** and turn it into struc
 - [Usage](#usage)
 - [Example Output](#example-output)
 - [Testing](#testing)
-- [Deployment on Hugging Face Spaces](#deployment-on-hugging-face-spaces)
+- [Deployment on Modal](#deployment-on-modal)
+  - [Install and Authenticate Modal](#install-and-authenticate-modal)
+  - [Create the Hugging Face Secret](#create-the-hugging-face-secret)
+  - [Test with Modal Serve](#test-with-modal-serve)
+  - [Deploy to Production](#deploy-to-production)
+  - [Updating the Deployment](#updating-the-deployment)
 - [Configuration Reference](#configuration-reference)
 - [Error Handling](#error-handling)
 - [Troubleshooting](#troubleshooting)
 - [Future Improvements](#future-improvements)
 - [License](#license)
+- [Repository](#repository)
 
 ---
 
@@ -50,7 +58,7 @@ Transcribe meeting audio or video with **OpenAI Whisper** and turn it into struc
 
 - 🤖 **Structured meeting-minutes generation** via `meta-llama/Llama-3.2-3B-Instruct`, with 4-bit quantization on CUDA GPUs for efficient memory usage.
 
-- 🧩 **Optional meeting context** — provide the meeting title, date, location, and attendees to guide generation. Missing information can be inferred from the transcript.
+- 🧩 **Optional meeting context** — provide the meeting title, date, location, and attendees to guide generation.
 
 - 📋 **Rich Markdown output** covering:
   - Meeting title
@@ -77,7 +85,7 @@ Transcribe meeting audio or video with **OpenAI Whisper** and turn it into struc
 
 - 🧪 **Automated test suite** for validation, prompt building, and export functionality using `pytest`.
 
-- ☁️ **Hugging Face Spaces ready** — no Colab or Google Drive dependencies are required.
+- ☁️ **Modal deployment ready** — the project includes a dedicated `modal_app.py` deployment entry point for running the Gradio application on a cloud GPU.
 
 ---
 
@@ -90,6 +98,8 @@ The project follows a layered, service-oriented architecture that separates the 
 │                         app.py                                  │
 │       Configures logging → builds UI → launches server          │
 └───────────────────────────────┬─────────────────────────────────┘
+                                │
+                                │ Local execution
                                 │
 ┌───────────────────────────────▼─────────────────────────────────┐
 │                    src/ui/gradio_app.py                         │
@@ -117,6 +127,21 @@ The project follows a layered, service-oriented architecture that separates the 
 │ validators · exporters · logger · hf_auth · exceptions          │
 │ settings                                                        │
 └─────────────────────────────────────────────────────────────────┘
+
+
+                     Cloud deployment
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       modal_app.py                              │
+│       Modal deployment adapter + GPU-backed Gradio server       │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                                ▼
+                     src/ui/gradio_app.py
+                                │
+                                ▼
+                     MeetingMinutesPipeline
 ```
 
 ### Key Design Decisions
@@ -139,6 +164,9 @@ The project follows a layered, service-oriented architecture that separates the 
 - **Audio/video normalization**  
   Uploaded video files such as `.mp4` are converted to a Whisper-compatible WAV format through FFmpeg before transcription.
 
+- **Deployment adapter separation**  
+  `modal_app.py` contains Modal-specific deployment configuration without modifying the core application architecture. This allows the same `src/` application code to run locally and remotely.
+
 ---
 
 ## Folder Structure
@@ -147,6 +175,7 @@ The project follows a layered, service-oriented architecture that separates the 
 ai-meeting-minutes-generator/
 │
 ├── app.py
+├── modal_app.py
 ├── pyproject.toml
 ├── uv.lock
 ├── .env.example
@@ -217,8 +246,9 @@ ai-meeting-minutes-generator/
 - [UV](https://docs.astral.sh/uv/) installed
 - FFmpeg installed and available on the system `PATH`
 - A Hugging Face account
-- A Hugging Face access token with access to `meta-llama/Llama-3.2-3B-Instruct`
-- **Recommended:** NVIDIA GPU with CUDA for reasonable performance
+- Access to `meta-llama/Llama-3.2-3B-Instruct`
+- A Hugging Face access token with permission to download the model
+- **Recommended for local execution:** NVIDIA GPU with CUDA
 
 The application can fall back to CPU, but LLM generation will be significantly slower without GPU acceleration.
 
@@ -259,7 +289,7 @@ Create your local `.env` file from the provided template:
 cp .env.example .env
 ```
 
-On Windows PowerShell, you can also use:
+On Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
@@ -482,90 +512,153 @@ For coverage:
 uv run pytest --cov=src
 ```
 
+For code quality:
+
+```bash
+uv run ruff check .
+```
+
+For Python compilation checks:
+
+```bash
+uv run python -m compileall src app.py modal_app.py
+```
+
 ---
 
-## Deployment on Hugging Face Spaces
+# Deployment on Modal
 
-This project is structured to run as a **Gradio Hugging Face Space**.
+The production deployment uses **Modal** to host the Gradio interface on a GPU-backed cloud runtime.
 
-### 1. Create the Space
+The core application remains inside `src/`, while `modal_app.py` acts as the deployment adapter.
 
-Create a new Space from:
-
-https://huggingface.co/new-space
-
-Select:
-
-- **SDK:** Gradio
-- **Visibility:** according to your preference
-
-### 2. Upload the project
-
-The Space should contain the contents of this repository, including:
+### Deployment Architecture
 
 ```text
-app.py
-pyproject.toml
-uv.lock
-src/
-README.md
+Browser
+   │
+   ▼
+Modal Web Function
+   │
+   ▼
+Gradio UI
+   │
+   ▼
+MeetingMinutesPipeline
+   ├── Whisper Medium English
+   └── Llama 3.2 3B Instruct
+          │
+          ▼
+     Hugging Face
 ```
 
-Do not upload:
+The deployed Modal function uses a GPU runtime and stores the Hugging Face token through a Modal Secret rather than exposing it in the source code.
+
+---
+
+### Install and Authenticate Modal
+
+Install Modal through UV:
+
+```bash
+uv add modal
+```
+
+Authenticate the local Modal CLI:
+
+```bash
+uv run modal setup
+```
+
+Verify the active Modal profile:
+
+```bash
+uv run modal profile current
+```
+
+---
+
+### Create the Hugging Face Secret
+
+The deployment expects a Modal Secret named:
 
 ```text
-.env
-.venv/
+huggingface-secret
 ```
 
-### 3. Configure the Hugging Face Secret
+Create it from your local `.env` file:
 
-Open:
-
-```text
-Space Settings → Repository secrets
+```bash
+uv run modal secret create huggingface-secret --from-dotenv .env
 ```
 
-Add:
+The secret should contain:
 
 ```text
 HF_TOKEN
 ```
 
-and set its value to a Hugging Face token that has access to:
+> ⚠️ Never commit `.env`, your Hugging Face token, or Modal credentials to GitHub.
 
-```text
-meta-llama/Llama-3.2-3B-Instruct
+---
+
+### Test with Modal Serve
+
+Before deploying the application permanently, test the deployment locally through Modal:
+
+```bash
+uv run modal serve modal_app.py
 ```
 
-Secrets should be stored through Hugging Face's secret-management system rather than hard-coded in the repository.
+Modal provides a temporary development URL.
 
-### 4. Select appropriate hardware
+Open the URL in your browser and verify:
 
-The application can automatically detect CUDA when available.
+- The Gradio interface loads.
+- Audio/video uploads work.
+- Microphone input works.
+- Meeting minutes generation works.
+- Transcript generation works.
+- Export downloads work.
 
-For practical performance, a GPU-backed Space is recommended because both Whisper and Llama require significant compute resources.
-
-CPU execution is supported as a fallback but can be considerably slower.
-
-### 5. Build and launch
-
-The project uses:
-
-```text
-pyproject.toml
-uv.lock
-```
-
-for dependency management and launches through:
+Stop the development server with:
 
 ```text
-app.py
+Ctrl+C
 ```
 
-The Hugging Face Space will build the environment and start the Gradio application.
+> `modal serve` is intended for development and testing. The development URL is not the production deployment.
 
-> **Important:** Actual Hugging Face hardware availability and pricing can vary. Check the current Space hardware options before deployment.
+---
+
+### Deploy to Production
+
+After the application has been tested successfully:
+
+```bash
+uv run modal deploy modal_app.py
+```
+
+Modal will create a persistent deployment and provide a public web URL.
+
+The production application can then be accessed directly from that URL without running `modal serve` on your local computer.
+
+---
+
+### Updating the Deployment
+
+After making changes to the application:
+
+1. Test locally.
+2. Run the automated tests.
+3. Commit and push the changes to GitHub.
+4. Deploy the updated version:
+
+```bash
+uv run modal deploy modal_app.py
+```
+
+The Modal deployment uses the code from the current project directory at deployment time.
 
 ---
 
